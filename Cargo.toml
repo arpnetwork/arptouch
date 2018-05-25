@@ -1,0 +1,9 @@
+[package]
+name = "arptouch"
+version = "0.1.0"
+authors = ["rusiby <rusiby@163.com>"]
+build = "build.rs"
+
+[dependencies]
+libc = "0.2.40"
+libevdev-sys = "0.1.1"
