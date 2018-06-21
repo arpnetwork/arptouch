@@ -13,8 +13,8 @@ use std::io;
 pub enum Command {
     Commit,
     Reset,
-    Down(usize, i32, i32, i32),
-    Move(usize, i32, i32, i32),
+    Down(usize, i32, i32, i32, i32, i32),
+    Move(usize, i32, i32, i32, i32, i32),
     Up(usize),
     Wait(u64),
 }
@@ -30,17 +30,21 @@ impl Command {
             match items[0] {
                 "c" if len == 1 => Ok(Command::Commit),
                 "r" if len == 1 => Ok(Command::Reset),
-                "d" if len == 5 => Ok(Command::Down(
+                "d" if len == 7 => Ok(Command::Down(
                     items[1].parse()?,
                     items[2].parse()?,
                     items[3].parse()?,
                     items[4].parse()?,
+                    items[5].parse()?,
+                    items[6].parse()?,
                 )),
-                "m" if len == 5 => Ok(Command::Move(
+                "m" if len == 7 => Ok(Command::Move(
                     items[1].parse()?,
                     items[2].parse()?,
                     items[3].parse()?,
                     items[4].parse()?,
+                    items[5].parse()?,
+                    items[6].parse()?,
                 )),
                 "u" if len == 2 => Ok(Command::Up(items[1].parse()?)),
                 "w" if len == 2 => Ok(Command::Wait(items[1].parse()?)),

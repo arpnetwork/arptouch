@@ -8,18 +8,22 @@
 
 extern crate arptouch;
 
-use arptouch::{device, command::{Command, Command::*}};
+use arptouch::{
+    command::{Command, Command::*}, device,
+};
 use std::thread::sleep;
 use std::time::Duration;
 
 fn main() {
     if let Some(mut mt) = device::autodetect() {
         println!(
-            "{} {} {} {}",
+            "{} {} {} {} {} {}",
             mt.dev.max_contacts(),
-            mt.dev.max_pressure(),
             mt.dev.max_x(),
-            mt.dev.max_y()
+            mt.dev.max_y(),
+            mt.dev.max_pressure(),
+            mt.dev.max_touch_major(),
+            mt.dev.max_touch_minor()
         );
 
         let mut buf = String::new();
@@ -28,8 +32,12 @@ fn main() {
                 match cmd {
                     Commit => mt.commit(),
                     Reset => mt.reset(),
-                    Down(contact, x, y, pressure) => mt.touch_down(contact, x, y, pressure),
-                    Move(contact, x, y, pressure) => mt.touch_move(contact, x, y, pressure),
+                    Down(contact, x, y, pressure, touch_major, touch_minor) => {
+                        mt.touch_down(contact, x, y, pressure, touch_major, touch_minor)
+                    }
+                    Move(contact, x, y, pressure, touch_major, touch_minor) => {
+                        mt.touch_move(contact, x, y, pressure, touch_major, touch_minor)
+                    }
                     Up(contact) => mt.touch_up(contact),
                     Wait(ms) => sleep(Duration::from_millis(ms)),
                 }

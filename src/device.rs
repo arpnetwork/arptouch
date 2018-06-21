@@ -41,6 +41,8 @@ pub struct MTDevice {
     max_contacts: usize,
     max_tracking_id: i32,
     has_btn_touch: bool,
+    has_btn_tool_finger: bool,
+    has_pressure: bool,
     state: State,
 }
 
@@ -97,6 +99,16 @@ impl Device {
         self.abs_max(ABS_MT_PRESSURE).unwrap_or(0)
     }
 
+    /// Gets the device's max touch-major value.
+    pub fn max_touch_major(&self) -> i32 {
+        self.abs_max(ABS_MT_TOUCH_MAJOR).unwrap_or(0)
+    }
+
+    /// Gets the device's max touch-minor value.
+    pub fn max_touch_minor(&self) -> i32 {
+        self.abs_max(ABS_MT_TOUCH_MINOR).unwrap_or(0)
+    }
+
     /// Returns whether this device is a multitouch device.
     /// Only support `Type B` currently.
     pub fn is_multitouch(&self) -> bool {
@@ -141,12 +153,16 @@ impl MTDevice {
         contacts.resize(size, false);
         let max_tracking_id = dev.get_abs_maximum(ABS_MT_TRACKING_ID);
         let has_btn_touch = dev.has_event_code(EV_KEY, BTN_TOUCH);
+        let has_btn_tool_finger = dev.has_event_code(EV_KEY, BTN_TOOL_FINGER);
+        let has_pressure = dev.has_abs_code(ABS_MT_PRESSURE);
 
         MTDevice {
             dev,
             max_contacts: size,
             max_tracking_id,
             has_btn_touch,
+            has_btn_tool_finger,
+            has_pressure,
             state: State {
                 contacts,
                 actived: 0,
@@ -157,33 +173,36 @@ impl MTDevice {
 
     /// Schedules a touch down on contact `<contact>` at `<x>,<y>` with
     /// `<pressure>` pressure for the next commit.
-    pub fn touch_down(&mut self, contact: usize, x: i32, y: i32, pressure: i32) {
+    pub fn touch_down(
+        &mut self,
+        contact: usize,
+        x: i32,
+        y: i32,
+        pressure: i32,
+        touch_major: i32,
+        touch_minor: i32,
+    ) {
         if contact < self.max_contacts {
             self.state.contacts[contact] = true;
             self.state.actived += 1;
 
-            let tracking_id = self.next_tracking_id();
-            self.write_abs_event(ABS_MT_SLOT, contact as i32);
-            self.write_abs_event(ABS_MT_TRACKING_ID, tracking_id);
-
-            if self.state.actived == 1 && self.has_btn_touch {
-                self.write_btn_touch_event(1);
-            }
-
-            self.write_abs_event(ABS_MT_PRESSURE, pressure);
-            self.write_abs_event(ABS_MT_POSITION_X, x);
-            self.write_abs_event(ABS_MT_POSITION_Y, y);
+            self.touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, true);
         }
     }
 
     /// Schedules a touch move on contact `<contact>` at `<x>,<y>` with
     /// `<pressure>` pressure for the next commit.
-    pub fn touch_move(&mut self, contact: usize, x: i32, y: i32, pressure: i32) {
+    pub fn touch_move(
+        &mut self,
+        contact: usize,
+        x: i32,
+        y: i32,
+        pressure: i32,
+        touch_major: i32,
+        touch_minor: i32,
+    ) {
         if contact < self.max_contacts && self.state.contacts[contact] {
-            self.write_abs_event(ABS_MT_SLOT, contact as i32);
-            self.write_abs_event(ABS_MT_PRESSURE, pressure);
-            self.write_abs_event(ABS_MT_POSITION_X, x);
-            self.write_abs_event(ABS_MT_POSITION_Y, y);
+            self.touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, false);
         }
     }
 
@@ -196,8 +215,8 @@ impl MTDevice {
             self.write_abs_event(ABS_MT_SLOT, contact as i32);
             self.write_abs_event(ABS_MT_TRACKING_ID, -1);
 
-            if self.state.actived == 0 && self.has_btn_touch {
-                self.write_btn_touch_event(0);
+            if self.state.actived == 0 {
+                self.write_btn_event(0);
             }
         }
     }
@@ -221,12 +240,50 @@ impl MTDevice {
         self.dev.write_event(EV_SYN, SYN_REPORT, 0);
     }
 
+    fn touch_down_or_move(
+        &mut self,
+        contact: usize,
+        x: i32,
+        y: i32,
+        pressure: i32,
+        touch_major: i32,
+        touch_minor: i32,
+        is_down: bool,
+    ) {
+        self.write_abs_event(ABS_MT_SLOT, contact as i32);
+        if is_down {
+            let tracking_id = self.next_tracking_id();
+            self.write_abs_event(ABS_MT_TRACKING_ID, tracking_id);
+
+            if self.state.actived == 1 {
+                self.write_btn_event(1);
+            }
+        }
+
+        if self.has_pressure {
+            self.write_abs_event(ABS_MT_PRESSURE, pressure);
+        }
+        self.write_abs_event(ABS_MT_TOUCH_MAJOR, touch_major);
+        self.write_abs_event(ABS_MT_TOUCH_MINOR, touch_minor);
+        self.write_abs_event(ABS_MT_POSITION_X, x);
+        self.write_abs_event(ABS_MT_POSITION_Y, y);
+    }
+
+    fn write_btn_event(&self, value: i32) {
+        if self.has_btn_touch {
+            self.write_key_event(BTN_TOUCH, value);
+        }
+        if self.has_btn_tool_finger {
+            self.write_key_event(BTN_TOOL_FINGER, value);
+        }
+    }
+
     fn write_abs_event(&self, code: u16, value: i32) {
         self.dev.write_event(EV_ABS, code, value);
     }
 
-    fn write_btn_touch_event(&self, value: i32) {
-        self.dev.write_event(EV_KEY, BTN_TOUCH, value);
+    fn write_key_event(&self, code: u16, value: i32) {
+        self.dev.write_event(EV_KEY, code, value);
     }
 
     fn next_tracking_id(&mut self) -> i32 {
