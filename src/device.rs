@@ -183,10 +183,12 @@ impl MTDevice {
         touch_minor: i32,
     ) {
         if contact < self.max_contacts {
-            self.state.contacts[contact] = true;
-            self.state.actived += 1;
+            if !self.state.contacts[contact] {
+                self.state.contacts[contact] = true;
+                self.state.actived += 1;
 
-            self.touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, true);
+                self.touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, true);
+            }
         }
     }
 
