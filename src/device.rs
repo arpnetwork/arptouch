@@ -32,6 +32,7 @@ struct State {
 /// Input Device
 pub struct Device {
     evdev: *mut Evdev,
+    path: String,
     fd: RawFd,
 }
 
@@ -57,7 +58,8 @@ impl Device {
             return Err(io::Error::from_raw_os_error(ret));
         }
 
-        Ok(Device { evdev, fd })
+        let path = String::from(path.as_ref().to_str().unwrap());
+        Ok(Device { evdev, path, fd })
     }
 
     /// Write a input event into this device.
@@ -77,6 +79,11 @@ impl Device {
     pub fn name(&self) -> &str {
         let name = unsafe { libevdev_get_name(self.evdev) };
         unsafe { CStr::from_ptr(name) }.to_str().unwrap()
+    }
+
+    /// Gets the device's path.
+    pub fn path(&self) -> &str {
+        self.path.as_str()
     }
 
     /// Gets the device's max contacts count.

@@ -17,13 +17,14 @@ use std::time::Duration;
 fn main() {
     if let Some(mut mt) = device::autodetect() {
         println!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {}",
             mt.dev.max_contacts(),
             mt.dev.max_x(),
             mt.dev.max_y(),
             mt.dev.max_pressure(),
             mt.dev.max_touch_major(),
-            mt.dev.max_touch_minor()
+            mt.dev.max_touch_minor(),
+            mt.dev.path()
         );
 
         let mut buf = String::new();
