@@ -24,8 +24,7 @@ type Evdev = libevdev;
 type InputEvent = input_event;
 
 enum Request {
-    Down(usize, i32, i32, i32, i32, i32),
-    Move(usize, i32, i32, i32, i32, i32),
+    DownOrMove(usize, i32, i32, i32, i32, i32, bool),
     Up(usize),
 }
 
@@ -206,17 +205,13 @@ impl MTDevice {
         touch_minor: i32,
     ) {
         if contact < self.max_contacts && !self.state.contacts[contact] {
+            self.state.contacts[contact] = true;
+
+            let req = Request::DownOrMove(contact, x, y, pressure, touch_major, touch_minor, true);
             if self.has_slot {
-                self.do_touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, true);
+                self.do_request(req);
             } else {
-                self.state.requested.push(Request::Down(
-                    contact,
-                    x,
-                    y,
-                    pressure,
-                    touch_major,
-                    touch_minor,
-                ));
+                self.state.requested.push(req);
             }
         }
     }
@@ -233,25 +228,11 @@ impl MTDevice {
         touch_minor: i32,
     ) {
         if contact < self.max_contacts && self.state.contacts[contact] {
+            let req = Request::DownOrMove(contact, x, y, pressure, touch_major, touch_minor, false);
             if self.has_slot {
-                self.do_touch_down_or_move(
-                    contact,
-                    x,
-                    y,
-                    pressure,
-                    touch_major,
-                    touch_minor,
-                    false,
-                );
+                self.do_request(req);
             } else {
-                self.state.requested.push(Request::Move(
-                    contact,
-                    x,
-                    y,
-                    pressure,
-                    touch_major,
-                    touch_minor,
-                ));
+                self.state.requested.push(req);
             }
         }
     }
@@ -259,10 +240,13 @@ impl MTDevice {
     /// Schedules a touch up on contact `<contact>`.
     pub fn touch_up(&mut self, contact: usize) {
         if contact < self.max_contacts && self.state.contacts[contact] {
+            self.state.contacts[contact] = false;
+
+            let req = Request::Up(contact);
             if self.has_slot {
-                self.do_touch_up(contact);
+                self.do_request(req);
             } else {
-                self.state.requested.push(Request::Up(contact));
+                self.state.requested.push(req);
             }
         }
     }
@@ -285,36 +269,29 @@ impl MTDevice {
     pub fn commit(&mut self) {
         if !self.has_slot {
             let requested: Vec<_> = self.state.requested.drain(..).collect();
-            requested.into_iter().for_each(|req| match req {
-                Request::Down(contact, x, y, pressure, touch_major, touch_minor) => {
-                    self.do_touch_down_or_move(
-                        contact,
-                        x,
-                        y,
-                        pressure,
-                        touch_major,
-                        touch_minor,
-                        true,
-                    );
-                }
-                Request::Move(contact, x, y, pressure, touch_major, touch_minor) => {
-                    self.do_touch_down_or_move(
-                        contact,
-                        x,
-                        y,
-                        pressure,
-                        touch_major,
-                        touch_minor,
-                        false,
-                    );
-                }
-                Request::Up(contact) => {
-                    self.do_touch_up(contact);
-                }
-            });
+            requested.into_iter().for_each(|req| self.do_request(req));
         }
 
         self.dev.write_event(EV_SYN, SYN_REPORT, 0);
+    }
+
+    fn do_request(&mut self, req: Request) {
+        match req {
+            Request::DownOrMove(contact, x, y, pressure, touch_major, touch_minor, is_down) => {
+                self.do_touch_down_or_move(
+                    contact,
+                    x,
+                    y,
+                    pressure,
+                    touch_major,
+                    touch_minor,
+                    is_down,
+                );
+            }
+            Request::Up(contact) => {
+                self.do_touch_up(contact);
+            }
+        }
     }
 
     fn do_touch_down_or_move(
@@ -328,7 +305,6 @@ impl MTDevice {
         is_down: bool,
     ) {
         if is_down {
-            self.state.contacts[contact] = true;
             self.state.actived += 1;
         }
 
@@ -360,7 +336,6 @@ impl MTDevice {
     }
 
     fn do_touch_up(&mut self, contact: usize) {
-        self.state.contacts[contact] = false;
         self.state.actived -= 1;
 
         if self.has_slot {
