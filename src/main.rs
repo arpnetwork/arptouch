@@ -16,16 +16,19 @@ use std::time::Duration;
 
 fn main() {
     if let Some(mut mt) = device::autodetect() {
-        println!(
-            "{} {} {} {} {} {} {}",
-            mt.dev.max_contacts(),
-            mt.dev.max_x(),
-            mt.dev.max_y(),
-            mt.dev.max_pressure(),
-            mt.dev.max_touch_major(),
-            mt.dev.max_touch_minor(),
-            mt.dev.path()
-        );
+        {
+            let dev = &mt.dev;
+            println!(
+                "{} {} {} {} {} {} {}",
+                dev.max_contacts(),
+                dev.max_x(),
+                dev.max_y(),
+                dev.max_pressure(),
+                dev.max_touch_major(),
+                dev.max_touch_minor(),
+                dev.path()
+            );
+        }
 
         let mut buf = String::new();
         while let Ok(_) = std::io::stdin().read_line(&mut buf) {

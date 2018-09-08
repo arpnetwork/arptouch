@@ -23,9 +23,17 @@ use std::ptr;
 type Evdev = libevdev;
 type InputEvent = input_event;
 
+enum Request {
+    Down(usize, i32, i32, i32, i32, i32),
+    Move(usize, i32, i32, i32, i32, i32),
+    Up(usize),
+}
+
 struct State {
     contacts: Vec<bool>,
     actived: u32,
+
+    requested: Vec<Request>,
     tracking_id: i32,
 }
 
@@ -41,9 +49,11 @@ pub struct MTDevice {
     pub dev: Device,
     max_contacts: usize,
     max_tracking_id: i32,
+    has_slot: bool,
     has_btn_touch: bool,
     has_btn_tool_finger: bool,
     has_pressure: bool,
+
     state: State,
 }
 
@@ -88,7 +98,11 @@ impl Device {
 
     /// Gets the device's max contacts count.
     pub fn max_contacts(&self) -> i32 {
-        self.abs_max(ABS_MT_SLOT).unwrap_or(-1) + 1
+        if self.has_abs_code(ABS_MT_SLOT) {
+            self.abs_max(ABS_MT_SLOT).unwrap() + 1
+        } else {
+            self.abs_max(ABS_MT_TRACKING_ID).unwrap_or(1)
+        }
     }
 
     /// Gets the device's max value in the x-axis.
@@ -117,9 +131,8 @@ impl Device {
     }
 
     /// Returns whether this device is a multitouch device.
-    /// Only support `Type B` currently.
     pub fn is_multitouch(&self) -> bool {
-        self.has_abs_code(ABS_MT_SLOT)
+        self.has_abs_code(ABS_MT_POSITION_X)
     }
 
     fn abs_max(&self, code: u16) -> Option<i32> {
@@ -159,6 +172,7 @@ impl MTDevice {
         let mut contacts = Vec::with_capacity(size);
         contacts.resize(size, false);
         let max_tracking_id = dev.get_abs_maximum(ABS_MT_TRACKING_ID);
+        let has_slot = dev.has_abs_code(ABS_MT_SLOT);
         let has_btn_touch = dev.has_event_code(EV_KEY, BTN_TOUCH);
         let has_btn_tool_finger = dev.has_event_code(EV_KEY, BTN_TOOL_FINGER);
         let has_pressure = dev.has_abs_code(ABS_MT_PRESSURE);
@@ -167,12 +181,14 @@ impl MTDevice {
             dev,
             max_contacts: size,
             max_tracking_id,
+            has_slot,
             has_btn_touch,
             has_btn_tool_finger,
             has_pressure,
             state: State {
                 contacts,
                 actived: 0,
+                requested: Vec::with_capacity(size),
                 tracking_id: 0,
             },
         }
@@ -189,12 +205,18 @@ impl MTDevice {
         touch_major: i32,
         touch_minor: i32,
     ) {
-        if contact < self.max_contacts {
-            if !self.state.contacts[contact] {
-                self.state.contacts[contact] = true;
-                self.state.actived += 1;
-
-                self.touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, true);
+        if contact < self.max_contacts && !self.state.contacts[contact] {
+            if self.has_slot {
+                self.do_touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, true);
+            } else {
+                self.state.requested.push(Request::Down(
+                    contact,
+                    x,
+                    y,
+                    pressure,
+                    touch_major,
+                    touch_minor,
+                ));
             }
         }
     }
@@ -211,21 +233,36 @@ impl MTDevice {
         touch_minor: i32,
     ) {
         if contact < self.max_contacts && self.state.contacts[contact] {
-            self.touch_down_or_move(contact, x, y, pressure, touch_major, touch_minor, false);
+            if self.has_slot {
+                self.do_touch_down_or_move(
+                    contact,
+                    x,
+                    y,
+                    pressure,
+                    touch_major,
+                    touch_minor,
+                    false,
+                );
+            } else {
+                self.state.requested.push(Request::Move(
+                    contact,
+                    x,
+                    y,
+                    pressure,
+                    touch_major,
+                    touch_minor,
+                ));
+            }
         }
     }
 
     /// Schedules a touch up on contact `<contact>`.
     pub fn touch_up(&mut self, contact: usize) {
         if contact < self.max_contacts && self.state.contacts[contact] {
-            self.state.contacts[contact] = false;
-            self.state.actived -= 1;
-
-            self.write_abs_event(ABS_MT_SLOT, contact as i32);
-            self.write_abs_event(ABS_MT_TRACKING_ID, -1);
-
-            if self.state.actived == 0 {
-                self.write_btn_event(0);
+            if self.has_slot {
+                self.do_touch_up(contact);
+            } else {
+                self.state.requested.push(Request::Up(contact));
             }
         }
     }
@@ -245,11 +282,42 @@ impl MTDevice {
 
     /// Commits the current set of changed touches, causing them to play out on the screen.
     /// Note that nothing visible will happen until you commit.
-    pub fn commit(&self) {
+    pub fn commit(&mut self) {
+        if !self.has_slot {
+            let requested: Vec<_> = self.state.requested.drain(..).collect();
+            requested.into_iter().for_each(|req| match req {
+                Request::Down(contact, x, y, pressure, touch_major, touch_minor) => {
+                    self.do_touch_down_or_move(
+                        contact,
+                        x,
+                        y,
+                        pressure,
+                        touch_major,
+                        touch_minor,
+                        true,
+                    );
+                }
+                Request::Move(contact, x, y, pressure, touch_major, touch_minor) => {
+                    self.do_touch_down_or_move(
+                        contact,
+                        x,
+                        y,
+                        pressure,
+                        touch_major,
+                        touch_minor,
+                        false,
+                    );
+                }
+                Request::Up(contact) => {
+                    self.do_touch_up(contact);
+                }
+            });
+        }
+
         self.dev.write_event(EV_SYN, SYN_REPORT, 0);
     }
 
-    fn touch_down_or_move(
+    fn do_touch_down_or_move(
         &mut self,
         contact: usize,
         x: i32,
@@ -259,14 +327,23 @@ impl MTDevice {
         touch_minor: i32,
         is_down: bool,
     ) {
-        self.write_abs_event(ABS_MT_SLOT, contact as i32);
         if is_down {
-            let tracking_id = self.next_tracking_id();
-            self.write_abs_event(ABS_MT_TRACKING_ID, tracking_id);
+            self.state.contacts[contact] = true;
+            self.state.actived += 1;
+        }
 
-            if self.state.actived == 1 {
-                self.write_btn_event(1);
+        if self.has_slot {
+            self.write_abs_event(ABS_MT_SLOT, contact as i32);
+            if is_down {
+                let tracking_id = self.next_tracking_id();
+                self.write_abs_event(ABS_MT_TRACKING_ID, tracking_id);
             }
+        } else {
+            self.write_abs_event(ABS_MT_TRACKING_ID, contact as i32);
+        }
+
+        if is_down && self.state.actived == 1 {
+            self.write_btn_event(1);
         }
 
         if self.has_pressure {
@@ -276,6 +353,30 @@ impl MTDevice {
         self.write_abs_event(ABS_MT_TOUCH_MINOR, touch_minor);
         self.write_abs_event(ABS_MT_POSITION_X, x);
         self.write_abs_event(ABS_MT_POSITION_Y, y);
+
+        if !self.has_slot {
+            self.dev.write_event(EV_SYN, SYN_MT_REPORT, 0);
+        }
+    }
+
+    fn do_touch_up(&mut self, contact: usize) {
+        self.state.contacts[contact] = false;
+        self.state.actived -= 1;
+
+        if self.has_slot {
+            self.write_abs_event(ABS_MT_SLOT, contact as i32);
+            self.write_abs_event(ABS_MT_TRACKING_ID, -1);
+        } else {
+            self.write_abs_event(ABS_MT_TRACKING_ID, contact as i32);
+        }
+
+        if self.state.actived == 0 {
+            self.write_btn_event(0);
+        }
+
+        if !self.has_slot {
+            self.dev.write_event(EV_SYN, SYN_MT_REPORT, 0);
+        }
     }
 
     fn write_btn_event(&self, value: i32) {
