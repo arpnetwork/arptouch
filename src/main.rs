@@ -9,7 +9,8 @@
 extern crate arptouch;
 
 use arptouch::{
-    command::{Command, Command::*}, device,
+    command::{Command, Command::*},
+    device,
 };
 use std::thread::sleep;
 use std::time::Duration;
@@ -31,7 +32,11 @@ fn main() {
         }
 
         let mut buf = String::new();
-        while let Ok(_) = std::io::stdin().read_line(&mut buf) {
+        while let Ok(size) = std::io::stdin().read_line(&mut buf) {
+            if size == 0 {
+                std::process::exit(-1);
+            }
+
             if let Ok(cmd) = Command::parse(buf.trim()) {
                 match cmd {
                     Commit => mt.commit(),
